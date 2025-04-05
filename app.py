@@ -3,6 +3,7 @@ import cloudscraper
 from bs4 import BeautifulSoup
 import time
 import os
+import random
 from login import token_required, init_login_routes
 
 app = Flask(__name__)
@@ -13,6 +14,17 @@ init_login_routes(app)
 
 # Store active sessions
 active_sessions = {}
+
+# List of free proxies (you can update this list with working proxies)
+FREE_PROXIES = [
+    # Format: 'http://ip:port'
+    # Leave empty for now, update with working proxies as needed
+]
+
+def get_random_proxy():
+    if FREE_PROXIES:
+        return random.choice(FREE_PROXIES)
+    return None
 
 '''def Seturl_in(url, retry=False):
     client = cloudscraper.create_scraper(allow_brotli=False)
@@ -44,7 +56,38 @@ def Seturl_in(url, retry=False, session_id=None):
     if retry and session_id and session_id in active_sessions:
         client = active_sessions[session_id]
     else:
-        client = cloudscraper.create_scraper(allow_brotli=False)
+        # Get a random proxy
+        proxy = get_random_proxy()
+        proxies = {"http": proxy, "https": proxy} if proxy else None
+        
+        # Enhanced cloudscraper configuration
+        client = cloudscraper.create_scraper(
+            browser={
+                'browser': 'chrome',
+                'platform': 'windows',
+                'mobile': False
+            },
+            delay=10,
+            allow_brotli=False,
+            interpreter='js2py'
+        )
+        
+        # Add common browser headers
+        client.headers.update({
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.5',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1',
+            'Cache-Control': 'max-age=0',
+            'TE': 'Trailers'
+        })
+        
+        # Set proxies if available
+        if proxies:
+            client.proxies = proxies
+            
         if session_id:
             active_sessions[session_id] = client
 
@@ -92,7 +135,38 @@ def runurl(url, retry=False, session_id=None):
     if retry and session_id and session_id in active_sessions:
         client = active_sessions[session_id]
     else:
-        client = cloudscraper.create_scraper(allow_brotli=False)
+        # Get a random proxy
+        proxy = get_random_proxy()
+        proxies = {"http": proxy, "https": proxy} if proxy else None
+        
+        # Enhanced cloudscraper configuration
+        client = cloudscraper.create_scraper(
+            browser={
+                'browser': 'chrome',
+                'platform': 'windows',
+                'mobile': False
+            },
+            delay=10,
+            allow_brotli=False,
+            interpreter='js2py'
+        )
+        
+        # Add common browser headers
+        client.headers.update({
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.5',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1',
+            'Cache-Control': 'max-age=0',
+            'TE': 'Trailers'
+        })
+        
+        # Set proxies if available
+        if proxies:
+            client.proxies = proxies
+            
         if session_id:
             active_sessions[session_id] = client
 
@@ -134,6 +208,32 @@ def runurl(url, retry=False, session_id=None):
             "session_id": session_id
         }
 
+def process_url_with_retries(url, function, retry_count=3, session_id=None):
+    """
+    Process URL with automatic retries for Cloudflare protection
+    """
+    for attempt in range(retry_count):
+        try:
+            # Process URL with appropriate function
+            result = function(url, retry=(attempt > 0), session_id=session_id)
+            
+            # If cloudflare is detected and we have more retries, try again
+            if result.get('status') == 'cloudflare' and attempt < retry_count - 1:
+                time.sleep(5)  # Wait before retry
+                continue
+                
+            return result
+            
+        except Exception as e:
+            if attempt < retry_count - 1:
+                time.sleep(5)  # Wait before retry
+                continue
+            return {
+                'status': 'error',
+                'message': f'Error after {retry_count} attempts: {str(e)}',
+                'session_id': session_id
+            }
+
 @app.route('/')
 @token_required
 def home():
@@ -147,17 +247,23 @@ def process_url():
     session_id = request.form.get('session_id')
     
     if not url:
-        return jsonify({'error': 'Please provide a URL'})
+        return jsonify({'status': 'error', 'message': 'Please provide a URL'})
     
     # Generate a new session ID if not provided
     if not session_id:
         session_id = os.urandom(16).hex()
     
-    # Check which domain the URL belongs to
+    # Check which domain the URL belongs to and process with retries if not explicitly retrying
     if "runurl.in" in url:
-        result = runurl(url, retry, session_id)
+        if retry:
+            result = runurl(url, retry, session_id)
+        else:
+            result = process_url_with_retries(url, runurl, retry_count=3, session_id=session_id)
     elif "seturl.in" in url:
-        result = Seturl_in(url, retry, session_id)
+        if retry:
+            result = Seturl_in(url, retry, session_id)
+        else:
+            result = process_url_with_retries(url, Seturl_in, retry_count=3, session_id=session_id)
     else:
         return jsonify({'status': 'error', 'message': 'Unsupported URL. Only runurl.in and seturl.in are supported.'})
     
